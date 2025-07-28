@@ -1,0 +1,225 @@
+1 --> Osquery commands
+
+# 👤 List all local users
+osqueryi --json "SELECT uid, gid, username, description, directory, shell FROM users;" > /var/log/osquery/users.json
+
+# 👥 Currently logged-in users
+osqueryi --json "SELECT * FROM logged_in_users;" > /var/log/osquery/logged_in_users.json
+
+# 🧾 Last logged-in users
+osqueryi --json "SELECT * FROM last;" > /var/log/osquery/last_logins.json
+
+# 🔍 All running processes
+osqueryi --json "SELECT pid, name, path, cmdline, username FROM processes;" > /var/log/osquery/all_processes.json
+
+# 🛑 Processes running as root
+osqueryi --json "SELECT pid, name, cmdline FROM processes WHERE uid = 0;" > /var/log/osquery/root_processes.json
+
+# ⚙️ Systemd services (persistence & autostart)
+osqueryi --json "SELECT name, path, status, start_type FROM systemd_services;" > /var/log/osquery/systemd_services.json
+
+# 🧬 Loaded kernel modules
+osqueryi --json "SELECT name, size, used_by FROM kernel_modules;" > /var/log/osquery/kernel_modules.json
+
+# ⏲️ Crontab entries for all users
+osqueryi --json "SELECT * FROM crontab;" > /var/log/osquery/crontab_entries.json
+
+# 🧾 Sudoers configuration
+osqueryi --json "SELECT * FROM sudoers;" > /var/log/osquery/sudoers.json
+
+# 🧱 SUID binaries (potential privilege escalation)
+osqueryi --json "SELECT path, permissions FROM suid_bin;" > /var/log/osquery/suid_binaries.json
+
+# 🚀 Autostart items (persistence mechanisms)
+osqueryi --json "SELECT * FROM startup_items;" > /var/log/osquery/startup_items.json
+
+# 📦 Installed RPM packages
+osqueryi --json "SELECT name, version, source FROM rpm_packages;" > /var/log/osquery/installed_packages.json
+
+# 🌐 Current network connections (TCP/UDP)
+osqueryi --json "SELECT * FROM process_open_sockets WHERE family = 2;" > /var/log/osquery/network_connections.json
+
+# 🔉 Listening ports (open services)
+osqueryi --json "SELECT * FROM listening_ports;" > /var/log/osquery/listening_ports.json
+
+# 📜 Shell history (user command logs)
+osqueryi --json "SELECT * FROM shell_history;" > /var/log/osquery/shell_history.json
+
+# 🚩 Suspicious process paths (not in /usr/)
+osqueryi --json "SELECT pid, name, path FROM processes WHERE path NOT LIKE '/usr/%';" > /var/log/osquery/suspicious_processes.json
+
+# 📂 Integrity check on /etc/passwd
+osqueryi --json "SELECT * FROM file WHERE path = '/etc/passwd';" > /var/log/osquery/etc_passwd_integrity.json
+
+# 🔌 USB device history (via udev)
+osqueryi --json "SELECT * FROM usb_devices;" > /var/log/osquery/usb_devices.json
+
+# 🗂 Files modified in /etc in last 24h
+osqueryi --json "SELECT * FROM file WHERE directory = '/etc' AND mtime >= (strftime('%s','now') - 86400);" > /var/log/osquery/recent_etc_mods.json
+
+# 📓 Check /etc/hosts file for tampering
+osqueryi --json "SELECT * FROM etc_hosts;" > /var/log/osquery/etc_hosts.json
+
+# 👻 UID 0 accounts other than root (hidden root users)
+osqueryi --json "SELECT * FROM users WHERE uid = 0 AND username != 'root';" > /var/log/osquery/hidden_uid0_users.json
+
+# 🛠 Processes with deleted binaries (possible malware)
+osqueryi --json "SELECT pid, name, path FROM processes WHERE on_disk = 0;" > /var/log/osquery/deleted_binary_processes.json
+
+# 🧪 Unusual listening ports (not standard services)
+osqueryi --json "SELECT pid, address, port, protocol FROM listening_ports WHERE port NOT IN (22, 80, 443);" > /var/log/osquery/unusual_listening_ports.json
+
+# 📜 Bash profile persistence hooks
+osqueryi --json "SELECT * FROM file WHERE path LIKE '/home/%/.bash_profile';" > /var/log/osquery/bash_profile_hooks.json
+
+# 💻 Command history of all users (excluding root)
+osqueryi --json "SELECT * FROM shell_history WHERE uid != 0;" > /var/log/osquery/user_shell_history.json
+
+# List all open listening TCP/UDP ports
+osqueryi --json "SELECT * FROM listening_ports;" > /var/log/osquery/listening_ports.json #Open listening TCP/UDP ports
+
+# Show current IPv4 TCP/UDP network connections
+osqueryi --json "SELECT * FROM process_open_sockets WHERE family = 2;" > /var/log/osquery/network_connections_ipv4.json #Current IPv4 TCP/UDP network connections
+
+# Show current IPv6 TCP/UDP network connections
+osqueryi --json "SELECT * FROM process_open_sockets WHERE family = 10;" > /var/log/osquery/network_connections_ipv6.json #Current IPv6 TCP/UDP network connections
+
+# List all open sockets (both IPv4 and IPv6)
+osqueryi --json "SELECT * FROM process_open_sockets;" > /var/log/osquery/all_open_sockets.json #All open sockets (IPv4 + IPv6)
+
+# List all open TCP listening ports only
+osqueryi --json "SELECT * FROM listening_ports WHERE protocol = 6;" > /var/log/osquery/tcp_listening_ports.json #Open TCP listening ports only
+
+# List all open UDP listening ports only
+osqueryi --json "SELECT * FROM listening_ports WHERE protocol = 17;" > /var/log/osquery/udp_listening_ports.json #Open UDP listening ports only
+
+
+
+2 --> Log analysis for login attempts
+( For RHEL based /var/log/auth.log && For debian/Ubuntu based /var/log/secure
+
+# 📁 Create directory for output
+mkdir -p /var/log/forensics/
+
+# 🔐 1. Successful SSH logins
+grep "Accepted" /var/log/secure | awk '{print "{\"date\":\""$1" "$2" "$3"\", \"user\":\""$9"\", \"ip\":\""$11"\"}"}' > /var/log/forensics/ssh_success_logins.json
+
+# ⛔ 2. Failed SSH logins
+grep "Failed password" /var/log/secure | awk '{print "{\"date\":\""$1" "$2" "$3"\", \"user\":\""$11"\", \"ip\":\""$13"\"}"}' > /var/log/forensics/ssh_failed_logins.json
+
+# 🛡️ 3. Authentication failures (PAM)
+grep "authentication failure;" /var/log/secure | awk -F'uid=' '{print "{\"log\":\"" $1 "\", \"uid\":" $2 "}"}' > /var/log/forensics/auth_failures.json
+
+# 📥 4. Root login attempts
+grep "session opened for user root" /var/log/secure | awk '{print "{\"date\":\""$1" "$2" "$3"\", \"terminal\":\""$6"\", \"pid\":\""$9"\"}"}' > /var/log/forensics/root_logins.json
+
+# 🔄 5. Sudo usage logs
+grep "sudo:" /var/log/secure | awk '{print "{\"date\":\""$1" "$2" "$3"\", \"message\":\""$0"\"}"}' > /var/log/forensics/sudo_usage.json
+
+# 📋 6. All SSHD events
+grep sshd /var/log/secure | awk '{print "{\"date\":\""$1" "$2" "$3"\", \"message\":\""$0"\"}"}' > /var/log/forensics/sshd_events.json
+
+# 🪪 7. User session opened/closed
+grep "session opened\|session closed" /var/log/secure | awk '{print "{\"date\":\""$1" "$2" "$3"\", \"message\":\""$0"\"}"}' > /var/log/forensics/user_sessions.json
+
+# 🕵️ 8. PAM activity (auth attempts)
+grep "pam_unix" /var/log/secure | awk '{print "{\"date\":\""$1" "$2" "$3"\", \"message\":\""$0"\"}"}' > /var/log/forensics/pam_activity.json
+
+# 💥 9. Brute-force attempt detection (failed SSH > 5 times per IP)
+grep "Failed password" /var/log/secure | awk '{print $11}' | sort | uniq -c | awk '$1 > 5 {print "{\"ip\":\""$2"\", \"attempts\":"$1"}"}' > /var/log/forensics/bruteforce_attempts.json
+
+# 🧪 10. Suspicious logins outside working hours (8PM–6AM)
+awk '$3 ~ /^(20|21|22|23|00|01|02|03|04|05)$/ && /Accepted/' /var/log/secure | awk '{print "{\"date\":\""$1" "$2" "$3"\", \"user\":\""$9"\", \"ip\":\""$11"\"}"}' > /var/log/forensics/nighttime_ssh_logins.json
+
+
+3 --> Persistence mechanisms
+
+# 📁 Create directory for output
+mkdir -p /var/log/forensics/
+
+# 🕒 1. Crontab entries for all users
+for user in $(cut -f1 -d: /etc/passwd); do 
+  crontab -u $user -l 2>/dev/null | awk -v usr="$user" '{print "{\"user\":\""usr"\", \"entry\":\""$0"\"}"}'
+done > /var/log/forensics/user_crontabs.json
+
+# 🕒 2. System-wide crontabs (/etc/crontab)
+awk '{print "{\"source\":\"/etc/crontab\", \"entry\":\""$0"\"}"}' /etc/crontab > /var/log/forensics/system_crontab.json
+
+# 🕒 3. Cron jobs in /etc/cron.* directories
+find /etc/cron.* -type f | while read file; do 
+  awk -v src="$file" '{print "{\"source\":\""src"\", \"entry\":\""$0"\"}"}' "$file"
+done > /var/log/forensics/cron_dirs.json
+
+# ⚙️ 4. Systemd services (enabled on boot)
+systemctl list-unit-files --type=service | grep enabled | awk '{print "{\"service\":\""$1"\", \"status\":\""$2"\"}"}' > /var/log/forensics/enabled_services.json
+
+# ⚙️ 5. Systemd service file paths and ExecStart
+find /etc/systemd/system /lib/systemd/system -name "*.service" -type f 2>/dev/null | while read file; do 
+  execstart=$(grep -E '^ExecStart=' "$file" | cut -d= -f2-) 
+  echo "{\"service_file\":\"$file\", \"exec_start\":\"$execstart\"}" 
+done > /var/log/forensics/systemd_execstart.json
+
+# 🛠️ 6. Init.d scripts (older persistence method)
+find /etc/init.d -type f | while read file; do 
+  echo "{\"init_script\":\"$file\"}" 
+done > /var/log/forensics/init_scripts.json
+
+# 📂 7. ~/.bashrc and ~/.bash_profile anomalies
+for userdir in /home/*; do 
+  for file in ".bashrc" ".bash_profile"; do
+    filepath="$userdir/$file"
+    if [ -f "$filepath" ]; then
+      awk -v user=$(basename "$userdir") -v file="$filepath" '{print "{\"user\":\""user"\", \"file\":\""file"\", \"line\":\""$0"\"}"}' "$filepath"
+    fi
+  done
+done > /var/log/forensics/bash_startups.json
+
+# 🐚 8. Global bash init files
+for file in /etc/bashrc /etc/profile /etc/profile.d/*.sh; do 
+  [ -f "$file" ] && awk -v f="$file" '{print "{\"file\":\""f"\", \"line\":\""$0"\"}"}' "$file"
+done > /var/log/forensics/global_bash_startups.json
+
+# 🧠 9. Services with suspicious names (case-insensitive grep)
+systemctl list-units --type=service | grep -iE 'backdoor|reverse|socat|nc|ncat|shell' | awk '{print "{\"suspicious_service\":\""$1"\"}"}' > /var/log/forensics/suspicious_services.json
+
+# 📦 10. rc.local (if executable)
+if [ -x /etc/rc.d/rc.local ]; then
+  awk '{print "{\"file\":\"/etc/rc.d/rc.local\", \"line\":\""$0"\"}"}' /etc/rc.d/rc.local > /var/log/forensics/rc_local.json
+fi
+
+4 --> User & Privilege Escalation Audit
+
+# 📁 Create directory for output
+mkdir -p /var/log/forensics/
+
+# 👥 1. List all users from /etc/passwd
+awk -F: '{print "{\"user\":\""$1"\", \"uid\":"$3", \"gid\":"$4", \"home\":\""$6"\", \"shell\":\""$7"\"}"}' /etc/passwd > /var/log/forensics/all_users.json
+
+# 🔑 2. List users with UID 0 (root or root-equivalent)
+awk -F: '($3 == 0) {print "{\"user\":\""$1"\", \"uid\":"$3"}"}' /etc/passwd > /var/log/forensics/root_equiv_users.json
+
+# 🛡️ 3. List sudoers entries (including included files)
+/usr/bin/getent group sudo > /var/log/forensics/sudo_group.json
+grep -v '^#' /etc/sudoers /etc/sudoers.d/* 2>/dev/null | awk '{print "{\"line\":\""$0"\"}"}' > /var/log/forensics/sudoers_entries.json
+
+# 🔍 4. List users with sudo privileges by parsing sudoers file
+grep -Po '^%?\S+\s+ALL=\(ALL(:ALL)?\)\s+ALL' /etc/sudoers /etc/sudoers.d/* 2>/dev/null | awk '{print "{\"sudo_entry\":\""$0"\"}"}' > /var/log/forensics/sudo_privileged_users.json
+
+# 🔧 5. Check for users with empty or no passwords
+awk -F: '($2 == "" || $2 == "*" || $2 == "!" ) {print "{\"user\":\""$1"\", \"passwd_field\":\""$2"\"}"}' /etc/shadow > /var/log/forensics/empty_passwords.json
+
+# 🔎 6. List all SUID binaries (potential escalation vectors)
+find / -perm -4000 -type f 2>/dev/null | awk '{print "{\"suid_binary\":\""$0"\"}"}' > /var/log/forensics/suid_binaries.json
+
+# 🔑 7. List SGID binaries
+find / -perm -2000 -type f 2>/dev/null | awk '{print "{\"sgid_binary\":\""$0"\"}"}' > /var/log/forensics/sgid_binaries.json
+
+# ⚠️ 8. Check for world writable files (security risk)
+find / -xdev -type f -perm -002 2>/dev/null | awk '{print "{\"world_writable_file\":\""$0"\"}"}' > /var/log/forensics/world_writable_files.json
+
+# 📄 9. Check passwd file permissions
+ls -l /etc/passwd | awk '{print "{\"file\":\"/etc/passwd\", \"permissions\":\""$1"\", \"owner\":\""$3"\", \"group\":\""$4"\"}"}' > /var/log/forensics/passwd_permissions.json
+
+# 📄 10. Check shadow file permissions
+ls -l /etc/shadow | awk '{print "{\"file\":\"/etc/shadow\", \"permissions\":\""$1"\", \"owner\":\""$3"\", \"group\":\""$4"\"}"}' > /var/log/forensics/shadow_permissions.json
+

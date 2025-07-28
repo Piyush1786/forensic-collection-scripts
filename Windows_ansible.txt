@@ -1,0 +1,429 @@
+Note: All the output files will be saved at C:\Temp\Forensic 
+Outputs will be saved in json or txt file.
+
+For group-1 (Windows)
+
+1 --> for Browsers (Windows/Linux)
+
+Steps:
+
+Google Chrome / Microsoft Edge
+Browser extensions are stored in the Extensions folder inside the user profile directory:
+
+Windows Chrome: %LOCALAPPDATA%\Google\Chrome\User Data\Default\Extensions\
+
+Windows Edge: %LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Extensions\
+
+Script to identify below:
+
+# Get installed browsers and versions
+# Ensure output directory exists
+$outputDir = "C:\Temp\Forensic"
+if (-not (Test-Path $outputDir)) {
+    New-Item -Path $outputDir -ItemType Directory | Out-Null
+}
+
+# Get installed browsers
+$installedBrowsers = Get-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+  Where-Object { $_.DisplayName -match "Chrome|Firefox|Edge" } |
+  Select-Object DisplayName, DisplayVersion
+
+# Get running browser processes
+$runningProcesses = Get-Process | Where-Object { $_.ProcessName -match "chrome|firefox|msedge" } |
+  Select-Object ProcessName, Id, StartTime
+
+# Get Chrome extensions
+$chromeExtensions = @()
+$chromeExtPath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions"
+if (Test-Path $chromeExtPath) {
+  $chromeExtensions = Get-ChildItem $chromeExtPath -Directory | ForEach-Object {
+    $manifestPath = Join-Path $_.FullName "manifest.json"
+    if (Test-Path $manifestPath) {
+      $content = Get-Content $manifestPath | ConvertFrom-Json
+      [PSCustomObject]@{
+        ExtensionID = $_.Name
+        Name        = $content.name
+        Version     = $content.version
+        Description = $content.description
+      }
+    }
+  }
+}
+
+# Get Firefox extensions
+$firefoxExtensions = @()
+$profilePath = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" | Where-Object { $_.Name -like "*.default-release" } | Select-Object -First 1
+if ($profilePath) {
+  $extensionsFile = Join-Path $profilePath.FullName "extensions.json"
+  if (Test-Path $extensionsFile) {
+    $content = Get-Content $extensionsFile | ConvertFrom-Json
+    $firefoxExtensions = $content.addons | Select-Object id, name, version, active, description
+  }
+}
+
+# Compose result object
+$result = [PSCustomObject]@{
+  InstalledBrowsers  = $installedBrowsers
+  RunningProcesses   = $runningProcesses
+  ChromeExtensions   = $chromeExtensions
+  FirefoxExtensions  = $firefoxExtensions
+}
+
+# Save JSON output to file
+$outputFile = Join-Path $outputDir "BrowserAudit.json"
+$result | ConvertTo-Json -Depth 4 | Out-File -FilePath $outputFile -Encoding UTF8
+
+Write-Host "Browser audit saved to $outputFile"
+
+
+
+2 --> Os query commands
+
+# 1. List all installed programs
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT name, version, install_location, publisher, install_date FROM programs ORDER BY install_date DESC;" > C:\Temp\Forensic\Osquery\InstalledPrograms.json
+
+# 2. Scheduled tasks (look for persistence mechanisms)
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT name, action, path, next_run_time, status FROM scheduled_tasks ORDER BY next_run_time DESC;" > C:\Temp\Forensic\Osquery\ScheduledTasks.json
+
+# 3. User shell folders (check for startup script persistence)
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM user_shell_folders;" > C:\Temp\Forensic\Osquery\UserShellFolders.json
+
+# 4. All user accounts and their group memberships
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT u.username, u.description, u.uid, u.type, g.groupname FROM users u LEFT JOIN user_groups ug ON u.uid = ug.uid LEFT JOIN groups g ON ug.gid = g.gid ORDER BY u.uid;" > C:\Temp\Forensic\Osquery\UserAccountsAndGroups.json
+
+# 5. Registry Run/RunOnce keys (autorun persistence)
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM registry WHERE key LIKE 'HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run%' OR key LIKE 'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run%';" > C:\Temp\Forensic\Osquery\RegistryRunKeys.json
+
+# 6. USB device history
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM usb_devices ORDER BY timestamp DESC;" > C:\Temp\Forensic\Osquery\USBDeviceHistory.json
+
+# 7. Listening network ports and associated processes
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT DISTINCT p.pid, p.name, l.port, l.address, p.path FROM listening_ports l JOIN processes p ON l.pid = p.pid WHERE l.address NOT IN ('127.0.0.1', '::1');" > C:\Temp\Forensic\Osquery\ListeningNetworkPorts.json
+
+# 8. Recent login activity
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM last ORDER BY time DESC LIMIT 25;" > C:\Temp\Forensic\Osquery\RecentLoginActivity.json
+
+# 9. Loaded kernel drivers (possible implants/rootkits)
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT name, path, start_type, service_type FROM drivers WHERE path NOT LIKE 'C:\\Windows\\System32\\drivers\\%' OR start_type != 1;" > C:\Temp\Forensic\Osquery\LoadedKernelDrivers.json
+
+# 10. Running processes and SHA-256 hashes
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT p.pid, p.name, p.path, h.sha256 FROM processes p LEFT JOIN hash h ON p.path = h.path WHERE h.sha256 IS NOT NULL ORDER BY p.start_time DESC;" > C:\Temp\Forensic\Osquery\RunningProcessesWithHashes.json
+
+# 11. List Local Admin Users
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT u.username, g.groupname FROM users u JOIN user_groups ug ON u.uid = ug.uid JOIN groups g ON ug.gid = g.gid WHERE g.groupname = 'Administrators';" > C:\Temp\Forensic\Osquery\LocalAdminUsers.json
+
+# 12. Detect Logon Sessions and Remote Access
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM logon_sessions WHERE logon_type != 2 AND logon_type != 10;" > C:\Temp\Forensic\Osquery\LogonSessionsRemoteAccess.json
+
+# 13. Enumerate All Startup Programs
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM startup_items;" > C:\Temp\Forensic\Osquery\StartupPrograms.json
+
+# 14. Scan for Unsigned Drivers (Potential Rootkits)
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM drivers WHERE signed = 0;" > C:\Temp\Forensic\Osquery\UnsignedDrivers.json
+
+# 15. Monitor AutoRun Entries in the Registry
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM registry WHERE key LIKE '%\\Software\\Microsoft\\Windows\\CurrentVersion\\Run%';" > C:\Temp\Forensic\Osquery\AutoRunEntries.json
+
+# 16. Search for WMI-based Persistence
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM wmi_event_filters;" > C:\Temp\Forensic\Osquery\WMIEventFilters.json
+
+# 17. Installed Programs excluding Microsoft/Windows
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM programs WHERE name NOT LIKE '%Microsoft%' AND name NOT LIKE '%Windows%';" > C:\Temp\Forensic\Osquery\NonMicrosoftInstalledPrograms.json
+
+# 18. Audit Token Privileges (Privilege Escalation Vector)
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM token_privileges WHERE name IN ('SeDebugPrivilege', 'SeTcbPrivilege', 'SeImpersonatePrivilege');" > C:\Temp\Forensic\Osquery\TokenPrivileges.json
+
+# 19. Review Scheduled Tasks excluding Microsoft
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT * FROM scheduled_tasks WHERE path NOT LIKE '%Microsoft%';" > C:\Temp\Forensic\Osquery\NonMicrosoftScheduledTasks.json
+
+# 20. Listening Network Ports with Process Info (excluding common ports)
+"C:\Program Files\osquery\osqueryi.exe" --json "SELECT l.address, l.port, p.name, p.path FROM listening_ports l JOIN processes p ON l.pid = p.pid WHERE l.address != '0.0.0.0' AND l.port NOT IN (80, 443);" > C:\Temp\Forensic\Osquery\ListeningPortsWithProcessInfo.json
+
+
+
+5) Event Log analysis
+
+# Set output directory
+$outputDir = "C:\Temp\Forensic\EventLogs"
+if (-Not (Test-Path $outputDir)) { New-Item -Path $outputDir -ItemType Directory | Out-Null }
+
+# Define critical event IDs per log
+$criticalEventIDs = @{
+    Security    = @(4624, 4625, 4647, 4634, 4672, 4720, 4726, 4776, 4778, 4779, 4769, 1102, 1149)
+    System      = @(1001, 10016, 55, 1014)
+    Application = @(1000, 1001, 1026)
+}
+
+function Export-CriticalEvents {
+    param (
+        [string]$logName,
+        [int[]]$eventIds,
+        [string]$outDir
+    )
+
+    $filterHash = @{
+        LogName = $logName
+        Id      = $eventIds
+        Level   = 1,2
+    }
+
+    $events = Get-WinEvent -FilterHashtable $filterHash -MaxEvents 1000 -ErrorAction SilentlyContinue
+    if ($events -and $events.Count -gt 0) {
+        $filePath = Join-Path $outDir "$logName-CriticalEvents.xml"
+        $events | Export-Clixml -Path $filePath
+    } else {
+        Write-Output "No critical events found in $logName log."
+    }
+}
+
+foreach ($log in $criticalEventIDs.Keys) {
+    Export-CriticalEvents -logName $log -eventIds $criticalEventIDs[$log] -outDir $outputDir
+}
+
+# Compress the XML files into a zip
+$zipPath = "C:\Temp\Forensic\EventLogs-Critical.zip"
+if (Test-Path $zipPath) { Remove-Item $zipPath }
+Compress-Archive -Path "$outputDir\*" -DestinationPath $zipPath
+
+Write-Output "Critical event logs collected and zipped at: $zipPath"
+
+
+
+6) User & Privilege Escalation Audit
+$seceditFile = "C:\Temp\Forensic\secpol.cfg"
+$reportFile = "C:\Temp\Forensic\SecurityReport.txt"
+
+if (-not (Test-Path "C:\Temp\Forensic")) { 
+    New-Item -Path "C:\Temp" -Name "Forensic" -ItemType Directory | Out-Null 
+}
+if (Test-Path $reportFile) { 
+    Remove-Item $reportFile 
+}
+
+function Write-Section {
+    param($title)
+    Write-Host "`n===== $title =====`n"
+    Add-Content -Path $reportFile -Value "`n===== $title =====`n"
+}
+
+function Write-AndLog {
+    param($content)
+    Write-Output $content
+    Add-Content -Path $reportFile -Value $content
+}
+
+# 1. List all local users
+Write-Section "Local Users"
+try {
+    $users = Get-LocalUser | Select-Object Name, Enabled, LastLogon
+    $users | Tee-Object -FilePath $reportFile -Append
+} catch {
+    Write-AndLog "Error listing local users: $_"
+}
+
+# 2. List local groups and members
+Write-Section "Local Groups and Members"
+try {
+    $groups = Get-LocalGroup
+    foreach ($group in $groups) {
+        $members = Get-LocalGroupMember -Group $group.Name | Select-Object @{Name='Group';Expression={$group.Name}}, Name, ObjectClass
+        $members | Tee-Object -FilePath $reportFile -Append
+    }
+} catch {
+    Write-AndLog "Error listing groups/members: $_"
+}
+
+# 3. Users with administrative privileges
+Write-Section "Administrators Group Members"
+try {
+    $admins = Get-LocalGroupMember -Group Administrators | Select-Object Name, ObjectClass
+    $admins | Tee-Object -FilePath $reportFile -Append
+} catch {
+    Write-AndLog "Error listing Administrators group members: $_"
+}
+
+# 4. Nested groups inside Administrators
+Write-Section "Nested Groups inside Administrators"
+try {
+    foreach ($member in $admins) {
+        if ($member.ObjectClass -eq 'Group') {
+            $msg = "Nested Group in Administrators: $($member.Name)"
+            Write-AndLog $msg
+        }
+    }
+} catch {
+    Write-AndLog "Error listing nested groups: $_"
+}
+
+# 5. Export local security policy and find user rights assignments
+Write-Section "Exporting Local Security Policy"
+try {
+    secedit /export /cfg $seceditFile | Out-Null
+    Write-AndLog "Local security policy exported to $seceditFile"
+} catch {
+    Write-AndLog "Error exporting local security policy: $_"
+}
+
+Write-Section "Privileges Assignment (SeDebugPrivilege, SeTakeOwnershipPrivilege, SeImpersonatePrivilege)"
+try {
+    $patterns = "SeDebugPrivilege","SeTakeOwnershipPrivilege","SeImpersonatePrivilege"
+    $lines = Select-String -Path $seceditFile -Pattern $patterns
+    if ($lines) {
+        $lines | ForEach-Object { Write-AndLog $_.Line }
+    } else {
+        Write-AndLog "No privilege assignments found for specified privileges."
+    }
+} catch {
+    Write-AndLog "Error searching privileges: $_"
+}
+
+# 6. Services running as SYSTEM or Administrator
+Write-Section "Services Running as LocalSystem or Administrator"
+try {
+    Get-WmiObject Win32_Service | Where-Object { $_.StartName -match 'LocalSystem|Administrator' } |
+    Select Name, StartName, State | Tee-Object -FilePath $reportFile -Append
+} catch {
+    Write-AndLog "Error retrieving services: $_"
+}
+
+# 7. Scheduled tasks running with highest privileges
+Write-Section "Scheduled Tasks Running with Highest Privileges"
+try {
+    Get-ScheduledTask | Where-Object { $_.Principal.RunLevel -eq "Highest" } |
+    Select TaskName, TaskPath, State | Tee-Object -FilePath $reportFile -Append
+} catch {
+    Write-AndLog "Error retrieving scheduled tasks: $_"
+}
+
+# 8. Check ACLs on C:\Windows\System32 for writable permissions by non-admins
+Write-Section "ACLs on C:\\Windows\\System32 (Writable by Non-Admins)"
+try {
+    $acl = Get-Acl "C:\Windows\System32"
+    $writableNonAdmins = $acl.Access | Where-Object {
+        $_.FileSystemRights.ToString().ToLower().Contains("write") -and
+        ($_.IdentityReference -notmatch "Administrators|SYSTEM|TrustedInstaller")
+    }
+
+    if ($writableNonAdmins) {
+        $writableNonAdmins | Tee-Object -FilePath $reportFile -Append
+    } else {
+        Write-AndLog "No writable permissions found for non-admin users on C:\Windows\System32"
+    }
+} catch {
+    Write-AndLog "Error checking ACLs: $_"
+}
+
+Write-Host "`nScript finished. Report saved to $reportFile"
+
+
+
+7) Persistence Mechanism detection
+
+# Define output file path
+$persistenceReport = "C:\Temp\Forensic\PersistenceReport.txt"
+
+# Create folder if not exists
+if (-not (Test-Path "C:\Temp\Forensic")) {
+    New-Item -Path "C:\Temp" -Name "Forensic" -ItemType Directory | Out-Null
+}
+
+# Remove existing report file if present
+if (Test-Path $persistenceReport) {
+    Remove-Item $persistenceReport
+}
+
+# Helper functions for output and logging
+function Write-Section {
+    param($title)
+    Write-Host "`n===== $title =====`n"
+    Add-Content -Path $persistenceReport -Value "`n===== $title =====`n"
+}
+
+function Write-AndLog {
+    param($content)
+    Write-Output $content
+    Add-Content -Path $persistenceReport -Value $content
+}
+
+# 1. Registry Autoruns
+Write-Section "Registry Autorun Entries"
+$autorunPaths = @(
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce",
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+)
+foreach ($path in $autorunPaths) {
+    Write-AndLog "Checking: $path"
+    try {
+        $entries = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
+        if ($entries) {
+            $props = $entries.PSObject.Properties | Where-Object { $_.Name -notmatch "PSPath|PSParentPath|PSChildName|PSDrive|PSProvider" }
+            if ($props) {
+                foreach ($p in $props) {
+                    Write-AndLog "$($p.Name) = $($p.Value)"
+                }
+            } else {
+                Write-AndLog "No entries found."
+            }
+        } else {
+            Write-AndLog "Registry path not found or inaccessible."
+        }
+    } catch {
+        Write-AndLog "Error accessing $path : $_"
+    }
+}
+
+# 2. Scheduled Tasks
+Write-Section "Scheduled Tasks"
+try {
+    $tasks = Get-ScheduledTask
+    if ($tasks) {
+        foreach ($task in $tasks) {
+            $principal = $task.Principal
+            $actions = $task.Actions
+            Write-AndLog "TaskName: $($task.TaskName)"
+            Write-AndLog "Path: $($task.TaskPath)"
+            Write-AndLog "RunLevel: $($principal.RunLevel)"
+            Write-AndLog "UserId: $($principal.UserId)"
+            Write-AndLog "Actions:"
+            foreach ($action in $actions) {
+                Write-AndLog " - $($action.Execute) $($action.Arguments)"
+            }
+            Write-AndLog "--------------------------"
+        }
+    } else {
+        Write-AndLog "No scheduled tasks found."
+    }
+} catch {
+    Write-AndLog "Error enumerating scheduled tasks: $_"
+}
+
+# 3. WMI Event Subscriptions
+Write-Section "WMI Event Subscriptions"
+try {
+    $namespace = "root\subscription"
+    $eventFilters = Get-WmiObject -Namespace $namespace -Class __EventFilter -ErrorAction SilentlyContinue
+    $eventConsumers = Get-WmiObject -Namespace $namespace -Class __EventConsumer -ErrorAction SilentlyContinue
+    $filterToConsumerBindings = Get-WmiObject -Namespace $namespace -Class __FilterToConsumerBinding -ErrorAction SilentlyContinue
+
+    if ($eventFilters -and $eventConsumers -and $filterToConsumerBindings) {
+        foreach ($binding in $filterToConsumerBindings) {
+            $filter = $eventFilters | Where-Object { $_.__Path -eq $binding.Filter }
+            $consumer = $eventConsumers | Where-Object { $_.__Path -eq $binding.Consumer }
+
+            Write-AndLog "Filter Name: $($filter.Name)"
+            Write-AndLog "Filter Query: $($filter.Query)"
+            Write-AndLog "Consumer Name: $($consumer.Name)"
+            Write-AndLog "Consumer Type: $($consumer.__Class)"
+            Write-AndLog "Binding Path: $($binding.__Path)"
+            Write-AndLog "--------------------------"
+        }
+    } else {
+        Write-AndLog "No WMI event subscriptions found."
+    }
+} catch {
+    Write-AndLog "Error enumerating WMI event subscriptions: $_"
+}
+
+Write-Host "`nPersistence detection complete. Report saved to $persistenceReport"
