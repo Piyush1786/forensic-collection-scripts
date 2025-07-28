@@ -1,0 +1,64 @@
+---
+- name: Linux Forensic Collection with osquery
+  hosts: linux
+  become: yes
+  gather_facts: no
+
+  vars_prompt:
+    - name: "linux_option"
+      prompt: |
+        Choose Linux forensic query to run:
+        1. Users and Logins
+        2. Network Info
+        3. SUID Binaries
+        4. Autostart/Startup Items
+        5. Run All
+      private: no
+
+  tasks:
+    - name: Check if osqueryi is installed
+      shell: which osqueryi
+      register: osquery_check
+      ignore_errors: true
+
+    - name: Create per-host forensic output directory
+      file:
+        path: "/var/log/forensics/{{ inventory_hostname }}"
+        state: directory
+        mode: '0755'
+
+    - name: Notify if osqueryi not found
+      debug:
+        msg: "osqueryi not found. Skipping osquery-based checks."
+      when: osquery_check.rc != 0
+
+    - name: Query - Users and Logins
+      shell: |
+        osqueryi --json "SELECT uid, username, shell FROM users;" > /var/log/forensics/{{ inventory_hostname }}/users.json
+        osqueryi --json "SELECT * FROM last;" > /var/log/forensics/{{ inventory_hostname }}/last_logins.json
+      when:
+        - osquery_check.rc == 0
+        - linux_option in ['1', '5']
+
+    - name: Query - Network Info
+      shell: |
+        osqueryi --json "SELECT * FROM listening_ports;" > /var/log/forensics/{{ inventory_hostname }}/listening_ports.json
+        osqueryi --json "SELECT * FROM process_open_sockets WHERE family = 2;" > /var/log/forensics/{{ inventory_hostname }}/network_connections.json
+      when:
+        - osquery_check.rc == 0
+        - linux_option in ['2', '5']
+
+    - name: Query - SUID Binaries
+      shell: |
+        osqueryi --json "SELECT path FROM suid_bin;" > /var/log/forensics/{{ inventory_hostname }}/suid_binaries.json
+      when:
+        - osquery_check.rc == 0
+        - linux_option in ['3', '5']
+
+    - name: Query - Autostart/Startup Items
+      shell: |
+        osqueryi --json "SELECT * FROM startup_items;" > /var/log/forensics/{{ inventory_hostname }}/startup_items.json
+        osqueryi --json "SELECT name, path, status FROM systemd_services;" > /var/log/forensics/{{ inventory_hostname }}/systemd_services.json
+      when:
+        - osquery_check.rc == 0
+        - linux_option in ['4', '5']
